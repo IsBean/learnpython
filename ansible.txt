@@ -1,0 +1,441 @@
+ansible是一款由python研发的agentless自动化运维的工具，安装使用简单，现已经被红帽收购
+Install
+配置epel源
+方法一：
+wget  http://mirrors.opencas.cn/epel//epel-release-latest-7.noarch.rpm
+rpm -ivh    epel-release-latest-7.noarch.rpm
+方法二“：
+[root@localhost yum.repos.d]# vim  epel.repo
+[epel]
+name=epel
+mirrorlist=http://mirrors.fedoraproject.org/mirrorlist?repo=epel-$releasever&arch=$basearch
+enabled=1
+gpgcheck=0
+[root@localhost yum.repos.d]# yum install ansible
+[root@localhost yum.repos.d]# rpm -ql ansible|less
+主配置文件：/etc/ansible/ansible.cfg
+而被管理的主机的存放列表在：/etc/ansible/hosts
+
+被管理的主机和管理主机使用密钥认证的方式，于是在ansible主机生成公钥发往hosts
+cd /etc/ssh/
+
+ssh-keygen -t rsa -f ssh_rsa_key
+ssh-copy-id -i  ssh_rsa_key.pub root@192.168.1.2
+ssh-copy-id -i  ssh_rsa_key.pub root@192.168.1.4
+但是测试失败了，没找到原因，所以只能暂时使用口令认证的方式了，配置方式：
+
+vim   /etc/ansible/hosts
+[webapps]
+192.168.1.3 ansible_ssh_usr=root ansible_ssh_pass=host_password
+192.168.1.4 ansible_ssh_usr=root ansible_ssh_pass=host_password
+说明：ansible_ssh_usr=root ansible_ssh_pass=host_password  这三项内容是主机变量类型inventory参数，不是主机变量
+
+Modules
+模块分为：核心(自带模块)和自定义模块，常见模块有：
+command  可省,但是不支持管道,以下的命令都是key-value格式的，等号两边不能有空格键
+ansible   all   -m  command -a 'echo hello'
+shell
+          ansible   192.168.1.60   -m  shell   -a   'cat /etc/shadow | grep root'
+script
+         vim  /tmp/bye.sh
+            #!/bin/bash
+            echo " this  is  $(hostname)  on  $(date +%F) " 
+             mkdir /tmp/peoples
+~                      
+          ansible  webserver    -m  script   -a   "/tmp/bye.sh"
+yum
+         安装    ansible   webserver   -m   yum  -a   'name=httpd  state=present'
+         卸载    ansible   webserver  -m     yum  -a   'name=httpd  state=absent'
+service
+          ansible   webserver   -m   service  -a  'name=httpd  state=started'
+ping
+          ansible   dbserver  -m     ping
+
+copy
+         ansible  webserver    -m  copy   -a   "src='/etc/fstab'   dst='/tmp/'"
+    
+file    state={directory|link|touch|absent}  ，如果是state为link，则还要指明src=，即链接至哪个文件
+          ansible    webserver   -m    file  -a   "path =/tmp/flowers.jpg   state=touch    "
+          ansible    webserver   -m    file   -a   "path='/tmp/flowers.jpg'  state=absent"
+cron
+          ansible  webserver   -m cron  -a  "minute='*/5'  name=sleep   job='/bin/hostname &>/dev/null'  "    这里不要写state=present，不然在host里面用crontab -l 看不到
+          删除任务： ansible webserver -m cron -a "name='sleep' state=absent"
+user   删除账号时，remove表示删除家目录
+         创建账号       ansible    webserver   -m  user  -a   'name=user1 state=present  system=no  '
+         删除账号以及家目录         ansible    webserver   -m  user  -a   'name=user1 state=absent remove=yes  system=no'
+   
+group
+         ansible    webserver   -m  group    -a  'name=beauty state=present '           
+setup   收集主机的信息，即facts变量，有参数，但是不用指定
+        ansible   dbserver  -m setup 
+template
+
+
+所有的文件定义格式，由字典和列表组成，格式要求很严格。。。多一个空格都不行。。。比如同一字典和列表必须对其，-后一个空格，kv格式的等号后面不能有空格，比如name={{ username }}
+vim  /etc/ansible/hosts
+[webserver]
+192.168.1.59
+192.168.1.60
+
+
+[dbserver]
+192.168.1.61
+192.168.1.66 ansible_ssh_user=dyl  ansible_ssh_pass=dyl@1234 
+
+
+[ubuntu]
+172.16.40.1 ansible_ssh_user=deng ansible_ssh_pass=deng ansible_ssh_port=22021
+
+playbooks各组件介绍：
+
+1.tags
+ansible-playbook  host  -t tarsname
+tars是在每个列表或者字典的最后面定义的，要调用的话，-t 指定tags的名字就成
+
+[root@localhost ansible]# cat second.yml 
+- hosts: webserver
+  tasks:
+   - name: install httpd
+     yum: name=httpd state=present
+   - name: start httpd
+     service: name=httpd state=started
+   - name: stop httpd.service
+     service: name=httpd state=stopped
+     when: ansible_os_family == 'RedHat'
+- hosts: ubuntu
+  remote_user: deng
+  tasks:
+   - name: say hello
+     command: /bin/echo 'hello debian os family!'
+     tags: hello
+     when: ansible_os_family == 'Deian'
+
+测试： ansible-playbook  -t  hello  sencond.yml
+
+roles里面的文件路径都采用的是相对路径，比如template的源文件就可以采用相对路径，但是目标文件要复制到远程主机还是需要采用绝对路径的，使用的时候在YAML文件里面调用就是了，里面也可以传递变量值  {roles,vars=xxx}
+2.handlers
+需要一个触发模块通知他，叫 notify ：  handlername
+首先在本地主机的httpd服务里面修改端口，接下来，将这个配置文件复制到webserver主机上面去
+- hosts: webserver
+  remote_user: root
+  tasks:
+  -name: change web port
+    copy: src=/etc/httpd/conf/httpd.conf  dest=/etc/httpd/conf/httpd.conf
+    notify: restart httpd
+  handlers:
+  -name: restart httpd
+    service: name=httpd  state=restarted
+  
+  
+
+3.templates：
+采用的是jinja2语法，但是用法和copy模块用法类似，主要在配置文件中引用变量，引用变量是采用双花括符,与copy所不同的是，template支持变量替换，而不仅仅是替换内容
+~]#vim /etc/ansible/hosts
+[webserver]
+192.168.1.59  httpd_port=8081
+192.168.1.60  httpd_port=8082
+
+ansible ]#cp /etc/httpd/conf/httpd.conf httpd.conf.j2
+
+
+ansible ]#vim  httpd.conf.j2
+Listen {{ httpd_port }}
+
+ansible ]#vim  fifth.sh
+- hosts: webservers
+  remote_user: root
+  tasks: 
+  - name:  change port
+    template: src=/etc/ansible/httpd.conf.j2  dest=/etc/httpd/conf/httpd.conf
+    notify: restart httpd
+  handlers:
+  - name: restart  httpd
+    service: name=httpd  state=restarted
+
+
+4.tasks
+最简单的，都是定义好name，然后调用模块就成了，组合一下命令
+]# cat second.yml 
+- hosts: webserver
+  tasks:
+   - name: install httpd
+     yum: name=httpd state=present
+   - name: start httpd
+     service: name=httpd state=started
+条件判断：when：
+    ]# cat second.yml 
+- hosts: webserver
+  tasks:
+   - name: install httpd
+     yum: name=httpd state=present
+   - name: start httpd
+     service: name=httpd state=started
+   - name: stop httpd.service
+     service: name=httpd state=stopped
+     when: ansible_os_family == 'RedHat'
+
+循环迭代：
+cat  forth.sh
+- host dbserver
+  remote_user: root
+  tasks: 
+  - name: add user accunt
+    user: name={{ item }}  state=present
+    with_items:
+        - user1
+        - user2
+        - user3
+        - user4
+5.vars
+变量：四种：facts，主机变量，组变量，自定义变量(common)
+]# cat first.yml 
+- hosts: webserver
+  remote_user: root
+  vars: 
+    username: user1
+    password: user1
+  tasks: 
+   - name: add a accout
+     user: name={{ username }}  state=present
+   - name: Add a password
+     shell: /bin/echo {{ password }} | /usr/bin/passwd --stdin {{ username }}
+facts是由setup模块收集的
+主机变量形如：
+[groupname]
+hostaddress    hostvars=xxx
+组变量：
+[group:vars]
+var1=xxx
+var2=xxx
+自定义变量也是比较容易理解的，形如：
+vars：
+   var1：xxx
+   var2： xxx
+
+ansible ]#cp /etc/httpd/conf/httpd.conf httpd.conf.j2
+6.roles/
+   rolesdir/
+       files/
+       vars/
+       template/
+      ....
+
+cd  /etc/ansible
+mkdir -p  /roles/webservers/{files,vars,tasks,templates,handlers},每个目录下面都至少有一个main.yml，而templates下面放的是jinja2的配置文档，.j2
+cd roles/webservers
+vim vars/main.yml
+username: nginx
+group: nginx
+
+vim tasks/main.yml
+- name: change acount
+  template: src=httpd.conf.j2  dest=/etc/http/conf/httpd.conf
+  notify:  restart  httpd
+
+这里需要  
+cp   /etc/httpd/conf/httpd.conf   /etc/ansible/roles/webservers/templates/ansible/httpd.conf.j2
+vim  httpd.conf.j2 ,修改里面的内容   User={{ username }}   Group={{ group }}
+
+vim handlers/main.yml
+- name: restart httpd
+  service:  name=httpd  state=restart
+cd ../..
+在和roles的同级目录下定义一个文件，调用roles下面的角色
+   vim webserver.yml
+- hosts: webserver
+  remote_user: root
+  roles:
+  - webservers
+
+测试：  ansible-playbook  webserver.yml
+小话题：通过role传送变量可以这么定义：
+   vim webserver.yml
+- hosts: webserver
+  remote_user: root
+  roles:
+    - { role: webservers , username: apache }
+
+
+7.inventory 参数：ansible_ssh_usr,ansible_ssh_pass,ansible_ssh_sudo_pass...
+8.条件判断和循环(迭代)
+条件判断：when，  when后面的条件内容是根据setup模块手机到的facts内容里面对应的形如   ansible_os_family=="Debian"之类的，也是写在靠后的位置
+迭代：item,形如
+  tasks:
+   - name: add user
+     user: name={{ item }} state=present
+     with_items:
+        - user1
+        - user2
+        - user3
+        - user4
+或者，扩展用法：?这个
+  tasks:
+   - name: add user
+     user: name={{ item.host }} state=present  group={{ item.group }}
+     with_items:
+        - { user: 'apple1',group:' group1' }
+       - { user: 'apple2',group: ' group 2 ' }
+  
+说明：冒号后面，花括符内左右两边均要有空格，字典和列表的格式形如 key: value，也可以在花括符里列出
+
+
+
+ansible ]#cp /etc/httpd/conf/httpd.conf httpd.conf.j2
+
+
+用ansible实现corosync
+1.时间同步
+2.安装corosync和pacemaker
+3.产生密钥文件 corosync-keygen -l   避免地址不够用   ，会生成authkey
+4.
+5.启动corosync和pacemaker  ss -tnl  5405
+6.crm_mon 能检查到2个节点说明成功
+
+
+
+ansible:Configuration,Command and Control,
+
+	运维工具的分类：
+		agent：puppet，saltstack，func
+		agentless：fabric，ansible，无代理的，比如ssh
+	
+	发布操作：
+
+		预发布验证：新版本的代码先发布到服务器(非线上服务器，但是跟线上环境配置完全相同，只是未接入调度器)
+		程序发布：
+			不能影响用户体验；
+			系统不能停机；并不是不能停，只是在可用性的基础上，摘除部分
+			不能导致系统故障或造成系统完全不可用
+
+			灰度发布：将线上的服务器一部分一部分的发布
+				发布路径：
+					/webapps/tuangou链接至要使用的版本
+					/webapp/tuangou-1.1
+					/webapp/tuangou-1.2
+
+				在调度器上下线一批主机(maintanace)-->关闭服务-->部署新版本的应用程序-->启动服务-->在调度器上启用这一批服务器
+
+				自动化灰度发布：脚本、发布平台；
+	
+	监控：cacti,nagios,zabbix,ganglia,...
+		系统指标、业务指标
+
+	ansible:
+		特性：
+			模块化，调用特定的模块来完成特定任务；
+			基于python语言实现，主要由paramiko(库)，PyYAML(半结构化)和jinjia2这三个关键模块实现;
+			部署简单：agentless
+			主从模式
+			支持自定义模块
+			支持playbook
+
+			幂等性；即同一个任务执行一遍或者多遍执行效果并没有幂等性，比如mkdir不具有幂等性，而man命令就具有幂等性
+
+		组成部分：
+			ansible core
+			host inverntory：库，定义在这个地方的主机才能被管理
+			connection plugins：与host建立会话，发送管理任务
+			modules:所有的管理行为由他们定义
+				core modules
+				custom modules：自定义模块
+			playbooks：剧本，即定义好部署的执行顺序
+
+		配置文件：
+			主配置文件:/etc/ansible/ansible.cfg
+			host invertory:/etc/ansible/hosts
+
+		ansible命令：
+			ansible <host-pattern> [-f forks] [-m module_name] [-a args]
+				-i PATH , --inventory=PATH:指明使用的host  inventory文件路径
+				-f forks：一批管几个
+			<host-pattern>:
+
+			文件：/etc/ansible/hosts
+				INI风格：中括号中的字符是组名；一个主机可以同时属于多个组
+
+	ansible-doc命令：获取模块列表，即模块使用格式
+		ansible-doc -l
+		ansible-doc -s mod_name
+
+	常用模块：
+		[-a args]:
+			args: key=value
+
+			注意;command模块的参数非为kv格式，而是直接给出要执行的命令即可
+
+		command：默认模块
+			-a 'COMMAND'
+
+		user:
+			-a 'name=username  state={present|absent} force=  uid=  shell=  home= '
+
+		group:
+			-a 'name=  state= gid= system= '
+
+		cron:
+			-a 'name= state= minute= hour= day= month= weekday= job= '
+
+		ping:
+			没有参数
+
+		file:
+			-a 'path= mode= owner= group= state={file|directory|link|hard|touch|present|absent  src= '
+				src是指如果链接文件，要链接到哪里去
+
+		copy:
+			-a 'dest= src= content= owner= group= mode= '
+
+		template 
+			-a ''
+
+		yum:
+			-a 'name= conf_file= state={present|latest|absent} enablerepo= disablerepo= '
+
+		service:
+			-a 'name= state={started|stopped|restarted} enabled= runlevel=' 
+
+		shell:
+			-a 'COMMAND'
+
+		script:
+			-a '/PATH/TO/SCRIPT'
+
+		setup:
+			获取指定主机的facts：
+				ansible 172.16.52.58 -m setup
+
+	playbooks:
+		核心元素
+			Tasks
+			Variables
+			Templates
+			Handlers
+			Roles
+		组织格式：YAML  ,类似XML,JSON这样的半结构化语言
+			YAML Ain't Markup Language；Yet Another Markup Language；
+				httpd://www.yaml.org
+			语法：
+				name:Jerry
+				age:21
+				gender:Male
+				spouse:
+					name:Lily
+					age；19
+					gender:Female
+				children:
+					-	name:tom
+						age:2
+						gender:male
+					-	name:apple
+						age:5
+						gender:male
+			列表：-
+			字典；key：value
+				{name:Jerry,age:21,gender:male}
+
+			ansible-playbook 命令
+
+	变量的传递;命令传递比脚本中定义的要优先
+
+	ansible-doc -l
+	meta:元数据
