@@ -1,3 +1,7 @@
 1 line
 2 line
+<<<<<<< HEAD
 Creating a new branch is quick AND simple.
+=======
+Creating a new branch is quick & simple.
+>>>>>>> master
